@@ -92,7 +92,7 @@ $variable_btnLogin.Add_Click( {
     $variable_getAccessPolicies.IsEnabled = $true
 
     $result = try {
-        $authTokenRequest = Invoke-WebRequest 'https://fp-fmc.securitylab.online/api/fmc_platform/v1/auth/generatetoken' -Headers $headers -Method POST
+        $authTokenRequest = Invoke-WebRequest "$fmcUrl/api/fmc_platform/v1/auth/generatetoken" -Headers $headers -Method POST
         
         $global:firepowerAccessToken = $authTokenRequest.Headers.Item('X-auth-access-token')
         $global:fmcDomainID = $authTokenRequest.Headers.Item('DOMAIN_UUID')
