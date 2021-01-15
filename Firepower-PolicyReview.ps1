@@ -14,11 +14,17 @@
 # IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 # or implied.
 ##
- 
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 Add-Type -AssemblyName PresentationFramework
 
 $global:firepowerAccessToken = $null
 $global:fmcDomainID = $null
+
+$global:csvOutput = $null
+
+$global:rateLimitSleep = 500
 
 $windowCode = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -47,6 +53,7 @@ $windowCode = @'
         <ListBox x:Name="listBox" HorizontalAlignment="Left" Height="203" Margin="10,46,0,0" VerticalAlignment="Top" Width="858"/>
         <Label x:Name="lblRuleCount" Content="" HorizontalAlignment="Left" Height="32" Margin="486,254,0,0" VerticalAlignment="Top" Width="382" FontSize="16"/>
         <Button x:Name="btnLogin" Content="Login" HorizontalAlignment="Left" Height="31" Margin="780,10,0,0" VerticalAlignment="Top" Width="88"/>
+        <Button x:Name="btnSaveCSV" Content="Export as CSV" HorizontalAlignment="Left" Height="32" Margin="711,254,0,0" VerticalAlignment="Top" Width="157" IsEnabled="False"/>
     </Grid>
 </Window>
 '@
@@ -63,10 +70,11 @@ try {
     throw
 }
 
+#Create ArrayList to hold available Access Control Policies
 $acpList = New-Object System.Collections.ArrayList
 
-
-$xaml.SelectNodes("//*[@Name]") | ForEach-Object {
+#Create variables for dialog control
+$XAML.SelectNodes("//*[@Name]") | ForEach-Object {
     try {
         Set-Variable -Name "variable_$($_.Name)" -Value $window.FindName($_.Name) -ErrorAction Stop
     } catch {
@@ -74,7 +82,7 @@ $xaml.SelectNodes("//*[@Name]") | ForEach-Object {
     }
 }
 
-
+#Login Process to FMC
 $variable_btnLogin.Add_Click( {
     $fmcUrl = $variable_textBox.Text
 
@@ -98,13 +106,19 @@ $variable_btnLogin.Add_Click( {
         $global:fmcDomainID = $authTokenRequest.Headers.Item('DOMAIN_UUID')
 
         $variable_getAccessPolicies.IsEnabled = $true
+
+        $variable_btnLogin.Content = "Logged In"
+
+        $variable_btnLogin.IsEnabled = $false
+        
+        $variable_textBox.IsEnabled = $false
+
     } catch {
         [System.Windows.MessageBox]::Show("Failure to login to the FMC") 
     } 
-    
-    
 })
 
+#Get FMC Access Policies from FMC
 $variable_getAccessPolicies.Add_Click( { 
     
     if($global:firepowerAccessToken -ne $null){
@@ -154,11 +168,14 @@ $variable_getAccessPolicies.Add_Click( {
     }
 })
 
+#Get FMC Access Policy Rules from FMC
 $variable_getPolicyRules.Add_Click( {
-    
+
     if($global:firepowerAccessToken -ne $null){
 
         $fmcUrl = $variable_textBox.Text
+        
+        $global:csvOutput = "Rule-ID,Rule-Name,RuleAction,Syslog,Log-Beginning,Log-End,FMC-Eventing`r`n"
 
         $variable_listView.Items.Clear()
 
@@ -200,11 +217,32 @@ $variable_getPolicyRules.Add_Click( {
 
                $variable_listView.Items.Add([pscustomobject]@{ID="$($ruleCount)";Name="$($record.name)";RuleAction="$($jsonRule.action)";Syslog="$($jsonRule.enableSyslog)";LogBegin="$($jsonRule.logBegin)";LogEnd="$($jsonRule.logEnd)";LogFmc="$($jsonRule.sendEventsToFMC)"})
 
+               $global:csvOutput = $global:csvOutput + "$ruleCount,$($record.name),$($jsonRule.action),$($jsonRule.enableSyslog),$($jsonRule.logBegin),$($jsonRule.logEnd),$($jsonRule.sendEventsToFMC)`r`n"
+
                $ruleCount = $ruleCount + 1
+
+               #Delay the process to ensure we do not exceed the API Rate Limit
+               Start-Sleep -Milliseconds $global:rateLimitSleep
             }
         }
+
+        $variable_btnSaveCSV.IsEnabled = $true
     }else{
         [System.Windows.MessageBox]::Show("Please login to FMC")
+    }
+})
+
+#Save last Access Control Policy Rule output as CSV
+$variable_btnSaveCSV.Add_Click( {
+
+    [System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null
+
+    $saveDialog = New-Object System.Windows.Forms.SaveFileDialog
+    $saveDialog.filter = "CSV Files (*.csv)| *.csv"
+
+    if($saveDialog.ShowDialog() -eq 'Ok'){
+        Out-File -FilePath $saveDialog.filename -InputObject $global:csvOutput -Encoding ASCII
+        Write-host "Saved CSV Data to file: $($saveDialog.filename)"
     }
 })
 
